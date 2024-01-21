@@ -1959,4 +1959,22 @@ class ActionDelegate {
         workflowService.save(useCase)
     }
 
+    /**
+     * add Option to multichoice map based on textfield value
+     * @param textFieldId , multiChoiceId
+     * @return
+     */
+    void addOptionToMultichoice(String textFieldId, String multiChoiceId){
+        def choices
+        if(useCase.dataSet[multiChoiceId].choices == null){
+            petriNetService.getPetriNet(task.get().processId)
+            choices = petriNetService.getPetriNet(task.get().processId).dataSet[multiChoiceId].choices
+        }
+        else {
+            choices = useCase.dataSet[multiChoiceId].choices
+        }
+        choices.add(new I18nString(useCase.dataSet[textFieldId].value.toString()))
+        useCase.dataSet[multiChoiceId].choices = choices
+        workflowService.save(useCase)
+    }
 }

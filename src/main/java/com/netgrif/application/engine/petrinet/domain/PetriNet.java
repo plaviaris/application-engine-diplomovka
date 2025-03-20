@@ -139,6 +139,16 @@ public class PetriNet extends PetriNetObject {
     @Setter
     private String importXmlPath;
 
+    @org.springframework.data.mongodb.core.mapping.Field("parentId")
+    @Getter
+    @Setter
+    private String parentId;
+
+    @org.springframework.data.mongodb.core.mapping.Field("childrenIds")
+    @Getter
+    @Setter
+    private List<String> childrenIds;
+
     public PetriNet() {
         this._id = new ObjectId();
         this.identifier = "Default";
@@ -161,6 +171,8 @@ public class PetriNet extends PetriNetObject {
         permissions = new HashMap<>();
         userRefs = new HashMap<>();
         functions = new LinkedList<>();
+        parentId = "";
+        childrenIds = new ArrayList<>();
     }
 
     public void addPlace(Place place) {
@@ -217,15 +229,18 @@ public class PetriNet extends PetriNetObject {
     }
 
     public void addArc(Arc arc) {
-        String transitionId = arc.getTransition().getStringId();
-        if (arcs.containsKey(transitionId)) {
-            arcs.get(transitionId).add(arc);
-        } else {
-            List<Arc> arcList = new LinkedList<>();
-            arcList.add(arc);
-            arcs.put(transitionId, arcList);
+        if (this.arcs == null) {
+            this.arcs = new HashMap<>();
         }
+        String key = arc.getSourceId();
+        List<Arc> arcList = this.arcs.get(key);
+        if (arcList == null) {
+            arcList = new ArrayList<>();
+            this.arcs.put(key, arcList);
+        }
+        arcList.add(arc);
     }
+
 
     public Node getNode(String importId) {
         if (places.containsKey(importId)) {
@@ -443,4 +458,17 @@ public class PetriNet extends PetriNetObject {
         this.getFunctions().forEach(clone::addFunction);
         return clone;
     }
+
+    public PetriNet cloneWithInheritance(PetriNet parentNet) {
+        PetriNet clone = this.clone();
+
+        if (parentNet != null) {
+            clone.setObjectId(new ObjectId());
+            clone.setCreationDate(LocalDateTime.now());
+            clone.setObjectId(new ObjectId());
+        }
+
+        return clone;
+    }
+
 }

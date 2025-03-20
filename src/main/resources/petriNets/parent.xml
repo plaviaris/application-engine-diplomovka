@@ -1,0 +1,23 @@
+<document xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://petriflow.com/petriflow.schema.xsd">
+	<id>parent</id>
+	<version>1.0.0</version>
+	<initials>NEW</initials>
+	<title>Child</title>
+	<icon>device_hub</icon>
+	<defaultRole>true</defaultRole>
+	<anonymousRole>true</anonymousRole>
+	<transitionRole>false</transitionRole>
+	<transition>
+		<id>t1</id>
+		<x>304</x>
+		<y>112</y>
+		<label/>
+	</transition>
+	<place>
+		<id>p1</id>
+		<x>208</x>
+		<y>112</y>
+		<tokens>1</tokens>
+		<static>false</static>
+	</place>
+</document>

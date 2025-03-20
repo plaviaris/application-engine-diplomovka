@@ -4,6 +4,8 @@ import com.netgrif.application.engine.importer.model.*;
 import com.netgrif.application.engine.importer.service.throwable.MissingIconKeyException;
 import com.netgrif.application.engine.petrinet.domain.Component;
 import com.netgrif.application.engine.petrinet.domain.DataGroup;
+import com.netgrif.application.engine.petrinet.domain.InheritanceMerger;
+import com.netgrif.application.engine.petrinet.domain.InheritanceValidator;
 import com.netgrif.application.engine.petrinet.domain.Place;
 import com.netgrif.application.engine.petrinet.domain.Transaction;
 import com.netgrif.application.engine.petrinet.domain.Transition;
@@ -27,7 +29,9 @@ import com.netgrif.application.engine.petrinet.domain.layout.TaskLayout;
 import com.netgrif.application.engine.petrinet.domain.policies.AssignPolicy;
 import com.netgrif.application.engine.petrinet.domain.policies.DataFocusPolicy;
 import com.netgrif.application.engine.petrinet.domain.policies.FinishPolicy;
+import com.netgrif.application.engine.petrinet.domain.repositories.PetriNetRepository;
 import com.netgrif.application.engine.petrinet.domain.roles.ProcessRole;
+import com.netgrif.application.engine.petrinet.domain.service.ProtocolInheritanceChecker;
 import com.netgrif.application.engine.petrinet.domain.throwable.MissingPetriNetMetaDataException;
 import com.netgrif.application.engine.petrinet.service.ArcFactory;
 import com.netgrif.application.engine.petrinet.service.interfaces.IPetriNetService;
@@ -35,6 +39,7 @@ import com.netgrif.application.engine.petrinet.service.interfaces.IProcessRoleSe
 import com.netgrif.application.engine.workflow.domain.FileStorageConfiguration;
 import com.netgrif.application.engine.workflow.domain.triggers.Trigger;
 import com.netgrif.application.engine.workflow.service.interfaces.IFieldActionsCacheService;
+
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.types.ObjectId;
@@ -54,10 +59,8 @@ import java.util.stream.Collectors;
 public class Importer {
 
     public static final String FILE_EXTENSION = ".xml";
-
     public static final String FIELD_KEYWORD = "f";
     public static final String TRANSITION_KEYWORD = "t";
-
     public static final String DEFAULT_FIELD_TEMPLATE = "material";
     public static final String DEFAULT_FIELD_APPEARANCE = "outline";
     public static final String DEFAULT_FIELD_ALIGNMENT = null;
@@ -67,6 +70,7 @@ public class Importer {
     protected PetriNet net;
     protected ProcessRole defaultRole;
     protected ProcessRole anonymousRole;
+    protected String parentId;
     @Getter
     protected Map<String, ProcessRole> roles;
     protected Map<String, Field> fields;
@@ -80,48 +84,41 @@ public class Importer {
 
     @Autowired
     protected FieldFactory fieldFactory;
-
     @Autowired
     protected FunctionFactory functionFactory;
-
     @Autowired
     protected IPetriNetService service;
-
     @Autowired
     protected IProcessRoleService processRoleService;
-
     @Autowired
     protected ArcFactory arcFactory;
-
     @Autowired
     protected RoleFactory roleFactory;
-
     @Autowired
     protected TriggerFactory triggerFactory;
-
     @Autowired
     protected IActionValidator actionValidator;
-
     @Autowired
     protected FieldActionsRunner actionsRunner;
-
     @Autowired
     protected FileStorageConfiguration fileStorageConfiguration;
-
     @Autowired
     protected ComponentFactory componentFactory;
-
     @Autowired
     protected IFieldActionsCacheService actionsCacheService;
-
     @Autowired
     private IDocumentValidator documentValidator;
-
     @Autowired
     private ITransitionValidator transitionValidator;
-
     @Autowired
     private ILogicValidator logicValidator;
+    @Autowired
+    private PetriNetRepository petriNetRepository;
+    @Autowired
+    private IPetriNetService petriNetService;
+
+    // Cache pre rodičovskú sieť, načítanú len raz, ak je definovaný parent
+    private PetriNet cachedParentNet;
 
     @Transactional
     public Optional<PetriNet> importPetriNet(InputStream xml) throws MissingPetriNetMetaDataException, MissingIconKeyException {
@@ -162,7 +159,6 @@ public class Importer {
     @Transactional
     protected void unmarshallXml(InputStream xml) throws JAXBException {
         JAXBContext jaxbContext = JAXBContext.newInstance(Document.class);
-
         Unmarshaller jaxbUnmarshaller = jaxbContext.createUnmarshaller();
         document = (Document) jaxbUnmarshaller.unmarshal(xml);
     }
@@ -178,7 +174,8 @@ public class Importer {
 
     @Transactional
     protected Optional<PetriNet> createPetriNet() throws MissingPetriNetMetaDataException, MissingIconKeyException {
-        net = new PetriNet();
+        // Vytvoríme a naplníme child sieť (bez spracovania oblúkov)
+        net = initializePetriNet();
 
         documentValidator.checkConflictingAttributes(document, document.getUsersRef(), document.getUserRef(), "usersRef", "userRef");
         documentValidator.checkDeprecatedAttributes(document);
@@ -187,6 +184,7 @@ public class Importer {
         setMetaData();
         net.setIcon(document.getIcon());
         net.setDefaultRoleEnabled(document.isDefaultRole() != null && document.isDefaultRole());
+        net.setParentId(document.getParent());
         net.setAnonymousRoleEnabled(document.isAnonymousRole() != null && document.isAnonymousRole());
 
         document.getRole().forEach(this::createRole);
@@ -194,7 +192,6 @@ public class Importer {
         document.getTransaction().forEach(this::createTransaction);
         document.getPlace().forEach(this::createPlace);
         document.getTransition().forEach(this::createTransition);
-        document.getArc().forEach(this::createArc);
         document.getMapping().forEach(this::applyMapping);
         document.getData().forEach(this::resolveDataActions);
         document.getTransition().forEach(this::resolveTransitionActions);
@@ -206,7 +203,6 @@ public class Importer {
         document.getUserRef().forEach(this::resolveUserRef);
 
         addPredefinedRolesWithDefaultPermissions();
-
         resolveProcessEvents(document.getProcessEvents());
         resolveCaseEvents(document.getCaseEvents());
         evaluateFunctions();
@@ -218,7 +214,27 @@ public class Importer {
             net.setDefaultCaseName(toI18NString(document.getCaseName()));
         }
 
+        List<com.netgrif.application.engine.importer.model.Arc> tempArcList = new ArrayList<>(document.getArc());
+
+        if (document.getParent() != null && !document.getParent().isEmpty()) {
+            PetriNet parentNet = petriNetService.getNewestVersionByIdentifier(document.getParent());
+            if (parentNet == null) {
+                throw new IllegalArgumentException("Parent PetriNet not found with ID: " + document.getParent());
+            }
+            PetriNet mergedNet = InheritanceMerger.mergeParentIntoChild(parentNet, net);
+            ProtocolInheritanceChecker.validateProtocolInheritance(parentNet, mergedNet);
+            net = mergedNet;
+
+        }
+
+        tempArcList.forEach(this::createArc);
+
         return Optional.of(net);
+    }
+
+
+    private PetriNet initializePetriNet() {
+        return new PetriNet();
     }
 
     @Transactional
@@ -239,7 +255,6 @@ public class Importer {
     @Transactional
     protected void createFunction(com.netgrif.application.engine.importer.model.Function function) {
         com.netgrif.application.engine.petrinet.domain.Function fun = functionFactory.getFunction(function);
-
         net.addFunction(fun);
         functions.add(fun);
     }
@@ -252,7 +267,6 @@ public class Importer {
         if (logic == null || usersId == null) {
             return;
         }
-
         net.addUserPermission(usersId, roleFactory.getProcessPermissions(logic));
     }
 
@@ -449,34 +463,74 @@ public class Importer {
     protected void createArc(com.netgrif.application.engine.importer.model.Arc importArc) {
         Arc arc = arcFactory.getArc(importArc);
         arc.setImportId(importArc.getId());
-        arc.setSource(getNode(importArc.getSourceId()));
-        arc.setDestination(getNode(importArc.getDestinationId()));
+
+        String sourceId = importArc.getSourceId();
+        String destinationId = importArc.getDestinationId();
+        arc.setSourceId(sourceId);
+        arc.setDestinationId(destinationId);
+
+        if (!existsInChildOrParent(sourceId)) {
+            throw new IllegalArgumentException("Source node with id [" + sourceId + "] not found in child or parent PetriNet.");
+        }
+        if (!existsInChildOrParent(destinationId)) {
+            throw new IllegalArgumentException("Destination node with id [" + destinationId + "] not found in child or parent PetriNet.");
+        }
+
         if (importArc.getReference() == null && arc.getReference() == null) {
             arc.setMultiplicity(importArc.getMultiplicity());
         }
+
         if (importArc.getReference() != null) {
             if (!places.containsKey(importArc.getReference()) && !fields.containsKey(importArc.getReference())) {
-                throw new IllegalArgumentException("Place or Data variable with id [" + importArc.getReference() + "] referenced by Arc [" + importArc.getId() + "] could not be found.");
+                throw new IllegalArgumentException("Place or Data variable with id [" + importArc.getReference() +
+                        "] referenced by Arc [" + importArc.getId() + "] could not be found.");
             }
             Reference reference = new Reference();
             reference.setReference(importArc.getReference());
             arc.setReference(reference);
         }
-//      It has to be here for backwards compatibility of variable arcs
+
         if (arc.getReference() != null) {
             arc.getReference().setType((places.containsKey(arc.getReference().getReference())) ? Type.PLACE : Type.DATA);
         }
+
         if (importArc.getBreakpoint() != null) {
-            importArc.getBreakpoint().forEach(position -> arc.getBreakpoints().add(new Position(position.getX(), position.getY())));
+            importArc.getBreakpoint().forEach(position ->
+                    arc.getBreakpoints().add(new Position(position.getX(), position.getY()))
+            );
+        }
+
+        // Pred pridaním oblúku zabezpečíme, že mapa oblúkov nie je null
+        if (net.getArcs() == null) {
+            net.setArcs(new HashMap<>());
         }
 
         net.addArc(arc);
     }
 
+    /**
+     * Pomocná metóda, ktorá overí, či uzol s daným ID existuje v child sieti alebo v parent sieti.
+     */
+    private boolean existsInChildOrParent(String id) {
+        boolean existsInChild = (places != null && places.containsKey(id)) ||
+                (transitions != null && transitions.containsKey(id));
+        if (existsInChild) {
+            return true;
+        }
+        if (document.getParent() != null && !document.getParent().isEmpty()) {
+            PetriNet parentNet = petriNetService.getNewestVersionByIdentifier(document.getParent());
+            if (parentNet != null) {
+                boolean existsInParent = (parentNet.getPlaces() != null && parentNet.getPlaces().containsKey(id)) ||
+                        (parentNet.getTransitions() != null && parentNet.getTransitions().containsKey(id));
+                return existsInParent;
+            }
+        }
+        return false;
+    }
+
     @Transactional
     protected void createDataSet(Data importData) throws MissingIconKeyException {
         Field field = fieldFactory.getField(importData, this);
-
         net.addDataSetField(field);
         fields.put(importData.getId(), field);
     }
@@ -569,7 +623,6 @@ public class Importer {
         event.setType(EventType.valueOf(imported.getType().value().toUpperCase()));
         event.setPostActions(parsePostActions(transitionId, imported));
         event.setPreActions(parsePreActions(transitionId, imported));
-
         return event;
     }
 
@@ -581,7 +634,6 @@ public class Importer {
         event.setType(ProcessEventType.valueOf(imported.getType().value().toUpperCase()));
         event.setPostActions(parsePostActions(null, imported));
         event.setPreActions(parsePreActions(null, imported));
-
         return event;
     }
 
@@ -593,7 +645,6 @@ public class Importer {
         event.setType(CaseEventType.valueOf(imported.getType().value().toUpperCase()));
         event.setPostActions(parsePostActions(null, imported));
         event.setPreActions(parsePreActions(null, imported));
-
         return event;
     }
 
@@ -641,7 +692,6 @@ public class Importer {
         if (!net.isDefaultRoleEnabled() || isDefaultRoleReferenced(transition)) {
             return;
         }
-
         Logic logic = new Logic();
         logic.setDelegate(true);
         logic.setPerform(true);
@@ -653,7 +703,6 @@ public class Importer {
         if (!net.isAnonymousRoleEnabled() || isAnonymousRoleReferenced(transition)) {
             return;
         }
-
         Logic logic = new Logic();
         logic.setPerform(true);
         transition.addRole(anonymousRole.getStringId(), roleFactory.getPermissions(logic));
@@ -664,7 +713,6 @@ public class Importer {
         if (!net.isDefaultRoleEnabled() || isDefaultRoleReferencedOnNet()) {
             return;
         }
-
         CaseLogic logic = new CaseLogic();
         logic.setCreate(true);
         logic.setDelete(true);
@@ -677,7 +725,6 @@ public class Importer {
         if (!net.isAnonymousRoleEnabled() || isAnonymousRoleReferencedOnNet()) {
             return;
         }
-
         CaseLogic logic = new CaseLogic();
         logic.setCreate(true);
         logic.setView(true);
@@ -712,7 +759,6 @@ public class Importer {
             dataGroup.setImportId(transition.getImportId() + "_dg_" + index);
 
         dataGroup.setLayout(new DataGroupLayout(importDataGroup));
-
         dataGroup.setTitle(toI18NString(importDataGroup.getTitle()));
         dataGroup.setAlignment(alignment);
         dataGroup.setStretch(importDataGroup.isStretch());
@@ -747,10 +793,8 @@ public class Importer {
         if (logic == null || roleId == null) {
             return;
         }
-
         logicValidator.checkConflictingAttributes(logic, logic.isAssigned(), logic.isAssign(), "assigned", "assign");
         logicValidator.checkDeprecatedAttributes(logic);
-
         if (logic.isView() != null && !logic.isView()) {
             transition.addNegativeViewRole(roleId);
         }
@@ -765,10 +809,8 @@ public class Importer {
         if (logic == null || userRefId == null) {
             return;
         }
-
         logicValidator.checkConflictingAttributes(logic, logic.isAssigned(), logic.isAssign(), "assigned", "assign");
         logicValidator.checkDeprecatedAttributes(logic);
-
         transition.addUserRef(userRefId, roleFactory.getPermissions(logic));
     }
 
@@ -780,12 +822,10 @@ public class Importer {
             if (logic == null || fieldId == null) {
                 return;
             }
-
             Set<FieldBehavior> behavior = new HashSet<>();
             if (logic.getBehavior() != null) {
                 logic.getBehavior().forEach(b -> behavior.add(FieldBehavior.fromString(b)));
             }
-
             transition.addDataSet(fieldId, behavior, null, null, null);
         } catch (NullPointerException e) {
             throw new IllegalArgumentException("Wrong dataRef id [" + dataRef.getId() + "] on transition [" + transition.getTitle() + "]", e);
@@ -800,22 +840,18 @@ public class Importer {
             if (layout == null || fieldId == null) {
                 return;
             }
-
             String template = DEFAULT_FIELD_TEMPLATE;
             if (layout.getTemplate() != null) {
                 template = layout.getTemplate().toString();
             }
-
             String appearance = DEFAULT_FIELD_APPEARANCE;
             if (layout.getAppearance() != null) {
                 appearance = layout.getAppearance().toString();
             }
-
             String alignment = DEFAULT_FIELD_ALIGNMENT;
             if (layout.getAlignment() != null) {
                 alignment = layout.getAlignment().value();
             }
-
             FieldLayout fieldLayout = new FieldLayout(layout.getX(), layout.getY(), layout.getRows(), layout.getCols(), layout.getOffset(), template, appearance, alignment);
             transition.addDataSet(fieldId, null, null, fieldLayout, null);
         } catch (NullPointerException e) {
@@ -837,20 +873,17 @@ public class Importer {
     @Transactional
     protected Map<DataEventType, DataEvent> buildEvents(String fieldId, List<com.netgrif.application.engine.importer.model.DataEvent> events, String transitionId) {
         Map<DataEventType, DataEvent> parsedEvents = new HashMap<>();
-
         List<com.netgrif.application.engine.importer.model.DataEvent> filteredEvents = events.stream()
                 .filter(event -> DataEventType.GET.toString().equalsIgnoreCase(event.getType().toString()))
                 .collect(Collectors.toList());
         if (!filteredEvents.isEmpty()) {
             parsedEvents.put(DataEventType.GET, parseDataEvent(fieldId, filteredEvents, transitionId));
         }
-
         filteredEvents = events.stream().filter(event -> DataEventType.SET.toString().equalsIgnoreCase(event.getType().toString()))
                 .collect(Collectors.toList());
         if (!filteredEvents.isEmpty()) {
             parsedEvents.put(DataEventType.SET, parseDataEvent(fieldId, filteredEvents, transitionId));
         }
-
         return parsedEvents;
     }
 
@@ -940,7 +973,6 @@ public class Importer {
     protected void parseIds(String fieldId, String transitionId, com.netgrif.application.engine.importer.model.Action importedAction, Action action) {
         String definition = importedAction.getValue();
         action.setDefinition(definition);
-
         if (containsParams(definition)) {
             parseParamsAndObjectIds(action, fieldId, transitionId);
         }
@@ -961,7 +993,6 @@ public class Importer {
     protected void parseObjectIds(Action action, String fieldId, String transitionId, String definition) {
         try {
             Map<String, String> ids = parseParams(definition);
-
             ids.entrySet().forEach(entry -> replaceImportId(action, fieldId, transitionId, entry));
         } catch (NullPointerException e) {
             throw new IllegalArgumentException("Failed to parse action: " + action, e);
@@ -976,7 +1007,6 @@ public class Importer {
         String key = parts[0];
         String importId = parts[1];
         String paramName = entry.getKey().trim();
-
         if (importId.startsWith("this")) {
             if (Objects.equals(key.trim(), FIELD_KEYWORD)) {
                 action.addFieldId(paramName, fieldId);
@@ -1016,7 +1046,6 @@ public class Importer {
     @Transactional
     protected void addTrigger(Transition transition, com.netgrif.application.engine.importer.model.Trigger importTrigger) {
         Trigger trigger = triggerFactory.buildTrigger(importTrigger);
-
         transition.addTrigger(trigger);
     }
 
@@ -1032,7 +1061,6 @@ public class Importer {
         place.setTokens(importPlace.getTokens());
         place.setPosition(importPlace.getX(), importPlace.getY());
         place.setTitle(importPlace.getLabel() != null ? toI18NString(importPlace.getLabel()) : new I18nString(""));
-
         net.addPlace(place);
         places.put(importPlace.getId(), place);
     }
@@ -1042,24 +1070,19 @@ public class Importer {
         if (importRole.getId().equals(ProcessRole.DEFAULT_ROLE)) {
             throw new IllegalArgumentException("Role ID '" + ProcessRole.DEFAULT_ROLE + "' is a reserved identifier, roles with this ID cannot be defined!");
         }
-
         if (importRole.getId().equals(ProcessRole.ANONYMOUS_ROLE)) {
             throw new IllegalArgumentException("Role ID '" + ProcessRole.ANONYMOUS_ROLE + "' is a reserved identifier, roles with this ID cannot be defined!");
         }
-
         ProcessRole role = new ProcessRole();
         Map<EventType, com.netgrif.application.engine.petrinet.domain.events.Event> events = createEventsMap(importRole.getEvent());
-
         role.setImportId(importRole.getId());
         role.setEvents(events);
-
         if (importRole.getName() == null) {
             role.setName(toI18NString(importRole.getTitle()));
         } else {
             role.setName(toI18NString(importRole.getName()));
         }
         role.set_id(new ObjectId());
-
         role.setNetId(net.getStringId());
         net.addRole(role);
         roles.put(importRole.getId(), role);
@@ -1070,7 +1093,6 @@ public class Importer {
         events.forEach(event ->
                 finalEvents.put(EventType.valueOf(event.getType().value().toUpperCase()), addEvent(null, event))
         );
-
         return finalEvents;
     }
 
@@ -1079,7 +1101,6 @@ public class Importer {
         events.forEach(event ->
                 finalEvents.put(ProcessEventType.valueOf(event.getType().value().toUpperCase()), addProcessEvent(event))
         );
-
         return finalEvents;
     }
 
@@ -1088,7 +1109,6 @@ public class Importer {
         events.forEach(event ->
                 finalEvents.put(CaseEventType.valueOf(event.getType().value().toUpperCase()), addCaseEvent(event))
         );
-
         return finalEvents;
     }
 
@@ -1097,50 +1117,37 @@ public class Importer {
         Transaction transaction = new Transaction();
         transaction.setTitle(toI18NString(importTransaction.getTitle()));
         transaction.setImportId(importTransaction.getId());
-
         net.addTransaction(transaction);
         transactions.put(importTransaction.getId(), transaction);
     }
 
     @Transactional
     protected Node getNode(String id) {
-        if (places.containsKey(id)) {
+        // Hľadáme uzol v merged sieti (child aj parent sú už zlúčené v net)
+        if (places != null && places.containsKey(id)) {
             return getPlace(id);
-        } else if (transitions.containsKey(id)) {
+        }
+        if (transitions != null && transitions.containsKey(id)) {
             return getTransition(id);
         }
         throw new IllegalArgumentException("Node with id [" + id + "] not found.");
     }
 
-    protected I18nString toI18NString(I18NStringType imported) {
-        if (imported == null) {
-            return null;
-        }
-        I18nString string = i18n.getOrDefault(imported.getName(), new I18nString(imported.getName(), imported.getValue()));
-        if (string.getDefaultValue() == null) {
-            string.setDefaultValue(imported.getValue());
-        }
-        return string;
-    }
 
     protected void addPredefinedRolesWithDefaultPermissions(com.netgrif.application.engine.importer.model.Transition importTransition, Transition transition) {
-        // Don't add if role or trigger mapping
         for (Mapping mapping : document.getMapping()) {
             if (Objects.equals(mapping.getTransitionRef(), importTransition.getId())
                     && (mapping.getRoleRef() != null && !mapping.getRoleRef().isEmpty())
-                    && (mapping.getTrigger() != null && !mapping.getTrigger().isEmpty())
-            ) {
+                    && (mapping.getTrigger() != null && !mapping.getTrigger().isEmpty())) {
                 return;
             }
         }
-        // Don't add if positive roles or triggers or positive user refs
         if ((importTransition.getRoleRef() != null && importTransition.getRoleRef().stream().anyMatch(this::hasPositivePermission))
                 || (importTransition.getTrigger() != null && !importTransition.getTrigger().isEmpty())
                 || (importTransition.getUsersRef() != null && importTransition.getUsersRef().stream().anyMatch(this::hasPositivePermission))
                 || (importTransition.getUserRef() != null && importTransition.getUserRef().stream().anyMatch(this::hasPositivePermission))) {
             return;
         }
-
         addDefaultRole(transition);
         addAnonymousRole(transition);
     }
@@ -1156,12 +1163,10 @@ public class Importer {
     }
 
     protected void addPredefinedRolesWithDefaultPermissions() {
-        // only if no positive role associations and no positive user ref associations
         if (net.getPermissions().values().stream().anyMatch(perms -> perms.containsValue(true))
                 || net.getUserRefs().values().stream().anyMatch(perms -> perms.containsValue(true))) {
             return;
         }
-
         addDefaultPermissions();
         addAnonymousPermissions();
     }
@@ -1194,7 +1199,6 @@ public class Importer {
         if (policy == null || policy.value() == null) {
             return AssignPolicy.MANUAL;
         }
-
         return AssignPolicy.valueOf(policy.value().toUpperCase());
     }
 
@@ -1202,7 +1206,6 @@ public class Importer {
         if (policy == null || policy.value() == null) {
             return DataFocusPolicy.MANUAL;
         }
-
         return DataFocusPolicy.valueOf(policy.value().toUpperCase());
     }
 
@@ -1210,7 +1213,6 @@ public class Importer {
         if (policy == null || policy.value() == null) {
             return FinishPolicy.MANUAL;
         }
-
         return FinishPolicy.valueOf(policy.value().toUpperCase());
     }
 
@@ -1218,11 +1220,9 @@ public class Importer {
         if (id.equals(ProcessRole.DEFAULT_ROLE)) {
             return defaultRole;
         }
-
         if (id.equals(ProcessRole.ANONYMOUS_ROLE)) {
             return anonymousRole;
         }
-
         ProcessRole role = roles.get(id);
         if (role == null) {
             throw new IllegalArgumentException("Role " + id + " not found");
@@ -1296,5 +1296,15 @@ public class Importer {
         }
         if (!missingMetaData.isEmpty())
             throw new MissingPetriNetMetaDataException(missingMetaData);
+    }
+    protected I18nString toI18NString(I18NStringType imported) {
+        if (imported == null) {
+            return null;
+        }
+        I18nString string = i18n.getOrDefault(imported.getName(), new I18nString(imported.getName(), imported.getValue()));
+        if (string.getDefaultValue() == null) {
+            string.setDefaultValue(imported.getValue());
+        }
+        return string;
     }
 }

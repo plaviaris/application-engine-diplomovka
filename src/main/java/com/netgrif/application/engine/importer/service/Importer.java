@@ -213,8 +213,6 @@ public class Importer {
             net.setDefaultCaseName(toI18NString(document.getCaseName()));
         }
 
-        List<com.netgrif.application.engine.importer.model.Arc> tempArcList = new ArrayList<>(document.getArc());
-
         if (document.getParent() != null && !document.getParent().isEmpty()) {
             PetriNet parentNet = petriNetService.getNewestVersionByIdentifier(document.getParent());
             if (parentNet == null) {
@@ -222,7 +220,7 @@ public class Importer {
             }
             net = InheritanceMerger.mergeParentIntoChild(parentNet, net);
 
-            tempArcList.forEach(this::createArc);
+            document.getArc().forEach(this::createArc);
 
             DetermineInheritanceService.determineInheritanceType(parentNet, net);
 

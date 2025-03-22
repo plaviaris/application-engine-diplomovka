@@ -173,8 +173,7 @@ public class Importer {
 
     @Transactional
     protected Optional<PetriNet> createPetriNet() throws MissingPetriNetMetaDataException, MissingIconKeyException {
-        // Vytvoríme a naplníme child sieť (bez spracovania oblúkov)
-        net = initializePetriNet();
+        net = new PetriNet();
 
         documentValidator.checkConflictingAttributes(document, document.getUsersRef(), document.getUserRef(), "usersRef", "userRef");
         documentValidator.checkDeprecatedAttributes(document);
@@ -213,7 +212,7 @@ public class Importer {
             net.setDefaultCaseName(toI18NString(document.getCaseName()));
         }
 
-        if (document.getParent() != null && !document.getParent().isEmpty()) {
+        if (document.getParent() != null) {
             PetriNet parentNet = petriNetService.getNewestVersionByIdentifier(document.getParent());
             if (parentNet == null) {
                 throw new IllegalArgumentException("Parent PetriNet not found with ID: " + document.getParent());
@@ -230,11 +229,6 @@ public class Importer {
         }
 
         return Optional.of(net);
-    }
-
-
-    private PetriNet initializePetriNet() {
-        return new PetriNet();
     }
 
     @Transactional
@@ -463,46 +457,25 @@ public class Importer {
     protected void createArc(com.netgrif.application.engine.importer.model.Arc importArc) {
         Arc arc = arcFactory.getArc(importArc);
         arc.setImportId(importArc.getId());
-
-        String sourceId = importArc.getSourceId();
-        String destinationId = importArc.getDestinationId();
-        arc.setSourceId(sourceId);
-        arc.setDestinationId(destinationId);
-
-        if (!existsInChildOrParent(sourceId)) {
-            throw new IllegalArgumentException("Source node with id [" + sourceId + "] not found in child or parent PetriNet.");
-        }
-        if (!existsInChildOrParent(destinationId)) {
-            throw new IllegalArgumentException("Destination node with id [" + destinationId + "] not found in child or parent PetriNet.");
-        }
-
+        arc.setSource(getNode(importArc.getSourceId()));
+        arc.setDestination(getNode(importArc.getDestinationId()));
         if (importArc.getReference() == null && arc.getReference() == null) {
             arc.setMultiplicity(importArc.getMultiplicity());
         }
-
         if (importArc.getReference() != null) {
             if (!places.containsKey(importArc.getReference()) && !fields.containsKey(importArc.getReference())) {
-                throw new IllegalArgumentException("Place or Data variable with id [" + importArc.getReference() +
-                        "] referenced by Arc [" + importArc.getId() + "] could not be found.");
+                throw new IllegalArgumentException("Place or Data variable with id [" + importArc.getReference() + "] referenced by Arc [" + importArc.getId() + "] could not be found.");
             }
             Reference reference = new Reference();
             reference.setReference(importArc.getReference());
             arc.setReference(reference);
         }
-
+//      It has to be here for backwards compatibility of variable arcs
         if (arc.getReference() != null) {
             arc.getReference().setType((places.containsKey(arc.getReference().getReference())) ? Type.PLACE : Type.DATA);
         }
-
         if (importArc.getBreakpoint() != null) {
-            importArc.getBreakpoint().forEach(position ->
-                    arc.getBreakpoints().add(new Position(position.getX(), position.getY()))
-            );
-        }
-
-        // Pred pridaním oblúku zabezpečíme, že mapa oblúkov nie je null
-        if (net.getArcs() == null) {
-            net.setArcs(new HashMap<>());
+            importArc.getBreakpoint().forEach(position -> arc.getBreakpoints().add(new Position(position.getX(), position.getY())));
         }
 
         net.addArc(arc);

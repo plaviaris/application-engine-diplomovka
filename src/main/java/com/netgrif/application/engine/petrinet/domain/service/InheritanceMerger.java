@@ -1,11 +1,10 @@
 package com.netgrif.application.engine.petrinet.domain;
 
+import com.netgrif.application.engine.petrinet.domain.arcs.Arc;
 import com.netgrif.application.engine.petrinet.domain.roles.ProcessRole;
 import com.netgrif.application.engine.petrinet.domain.dataset.Field;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.Map;
-import java.util.Set;
+
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -89,6 +88,38 @@ public class InheritanceMerger {
                             + func.getImportId() + "' from parent.");
                 }
                 merged.getFunctions().add(func);
+            }
+        }
+
+        if (parent.getArcs() != null) {
+            if (merged.getArcs() == null) {
+                merged.setArcs(new HashMap<>());
+            }
+            for (Map.Entry<String, List<Arc>> parentArcsEntry : parent.getArcs().entrySet()) {
+                String sourceId = parentArcsEntry.getKey();
+                List<Arc> arcsFromParent = parentArcsEntry.getValue();
+
+                // Ak v merged sieti nemáme žiadny záznam pre daný sourceId, pridáme prázdny zoznam
+                merged.getArcs().putIfAbsent(sourceId, new LinkedList<>());
+
+                List<Arc> mergedArcList = merged.getArcs().get(sourceId);
+
+                for (Arc parentArc : arcsFromParent) {
+                    // Tu môžete podľa potreby zistiť, či už v child nete náhodou nie je rovnaký oblúk
+                    // (napr. s rovnakým ID, source/dest alebo inou identifikáciou).
+                    // Ak áno, vyhoďte IllegalStateException, prípadne ho môžete preskočiť, to závisí od vašej politiky.
+
+                    // Napríklad takto – ak nájdeme rovnaké ID v mergedArcList, vyhodíme conflict:
+                    // (Treba rátať, že Arc niekedy ID nemá, alebo ho ukladá inak.)
+                    if (mergedArcList.stream()
+                            .anyMatch(arc -> arc.getStringId().equals(parentArc.getStringId()))) {
+                        throw new IllegalStateException("Conflict: Child PetriNet already contains Arc with ID '"
+                                + parentArc.getStringId() + "' from parent.");
+                    }
+
+                    // Inak oblúk pridáme
+                    mergedArcList.add(parentArc);
+                }
             }
         }
 

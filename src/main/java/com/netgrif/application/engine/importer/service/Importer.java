@@ -5,7 +5,6 @@ import com.netgrif.application.engine.importer.service.throwable.MissingIconKeyE
 import com.netgrif.application.engine.petrinet.domain.Component;
 import com.netgrif.application.engine.petrinet.domain.DataGroup;
 import com.netgrif.application.engine.petrinet.domain.InheritanceMerger;
-import com.netgrif.application.engine.petrinet.domain.InheritanceValidator;
 import com.netgrif.application.engine.petrinet.domain.Place;
 import com.netgrif.application.engine.petrinet.domain.Transaction;
 import com.netgrif.application.engine.petrinet.domain.Transition;
@@ -31,7 +30,7 @@ import com.netgrif.application.engine.petrinet.domain.policies.DataFocusPolicy;
 import com.netgrif.application.engine.petrinet.domain.policies.FinishPolicy;
 import com.netgrif.application.engine.petrinet.domain.repositories.PetriNetRepository;
 import com.netgrif.application.engine.petrinet.domain.roles.ProcessRole;
-import com.netgrif.application.engine.petrinet.domain.service.ProtocolInheritanceChecker;
+import com.netgrif.application.engine.petrinet.domain.service.DetermineInheritanceService;
 import com.netgrif.application.engine.petrinet.domain.throwable.MissingPetriNetMetaDataException;
 import com.netgrif.application.engine.petrinet.service.ArcFactory;
 import com.netgrif.application.engine.petrinet.service.interfaces.IPetriNetService;
@@ -221,13 +220,16 @@ public class Importer {
             if (parentNet == null) {
                 throw new IllegalArgumentException("Parent PetriNet not found with ID: " + document.getParent());
             }
-            PetriNet mergedNet = InheritanceMerger.mergeParentIntoChild(parentNet, net);
-            ProtocolInheritanceChecker.validateProtocolInheritance(parentNet, mergedNet);
-            net = mergedNet;
+            net = InheritanceMerger.mergeParentIntoChild(parentNet, net);
 
+            tempArcList.forEach(this::createArc);
+
+            DetermineInheritanceService.determineInheritanceType(parentNet, net);
+
+
+        } else {
+            document.getArc().forEach(this::createArc);
         }
-
-        tempArcList.forEach(this::createArc);
 
         return Optional.of(net);
     }

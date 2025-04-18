@@ -155,6 +155,22 @@ public class Importer {
         this.functions = new LinkedList<>();
     }
 
+    protected void initializeFromParent() {
+        if (cachedParentNet != null) {
+            Map<String, Transition> parentTransitions = cachedParentNet.getTransitions();
+            Map<String, Place> parentPlaces = cachedParentNet.getPlaces();
+
+            if (parentTransitions != null) {
+                this.transitions.putAll(parentTransitions);
+            }
+            if (parentPlaces != null) {
+                this.places.putAll(parentPlaces);
+            }
+        }
+
+    }
+
+
     @Transactional
     protected void unmarshallXml(InputStream xml) throws JAXBException {
         JAXBContext jaxbContext = JAXBContext.newInstance(Document.class);
@@ -182,7 +198,10 @@ public class Importer {
         setMetaData();
         net.setIcon(document.getIcon());
         net.setDefaultRoleEnabled(document.isDefaultRole() != null && document.isDefaultRole());
-        net.setParentId(document.getParent());
+        if(document.getParent() != null) {
+            net.setParentId(document.getParent().getId());
+            net.setType(document.getParent().getType());
+        }
         net.setAnonymousRoleEnabled(document.isAnonymousRole() != null && document.isAnonymousRole());
 
         document.getRole().forEach(this::createRole);
@@ -190,7 +209,6 @@ public class Importer {
         document.getTransaction().forEach(this::createTransaction);
         document.getPlace().forEach(this::createPlace);
         document.getTransition().forEach(this::createTransition);
-        document.getMapping().forEach(this::applyMapping);
         document.getData().forEach(this::resolveDataActions);
         document.getTransition().forEach(this::resolveTransitionActions);
         document.getData().forEach(this::addActionRefs);
@@ -213,19 +231,23 @@ public class Importer {
         }
 
         if (document.getParent() != null) {
-            PetriNet parentNet = petriNetService.getNewestVersionByIdentifier(document.getParent());
-            if (parentNet == null) {
+            cachedParentNet = petriNetService.getNewestVersionByIdentifier(document.getParent().getId());
+            if (cachedParentNet == null) {
                 throw new IllegalArgumentException("Parent PetriNet not found with ID: " + document.getParent());
             }
-            net = InheritanceMerger.mergeParentIntoChild(parentNet, net);
+            net = InheritanceMerger.mergeParentIntoChild(cachedParentNet, net);
+
+            initializeFromParent();
 
             document.getArc().forEach(this::createArc);
+            document.getMapping().forEach(this::applyMapping);
 
-            DetermineInheritanceService.determineInheritanceType(parentNet, net);
+            DetermineInheritanceService.determineInheritanceType(cachedParentNet, net);
 
 
         } else {
             document.getArc().forEach(this::createArc);
+            document.getMapping().forEach(this::applyMapping);
         }
 
         return Optional.of(net);
@@ -479,26 +501,6 @@ public class Importer {
         }
 
         net.addArc(arc);
-    }
-
-    /**
-     * Pomocná metóda, ktorá overí, či uzol s daným ID existuje v child sieti alebo v parent sieti.
-     */
-    private boolean existsInChildOrParent(String id) {
-        boolean existsInChild = (places != null && places.containsKey(id)) ||
-                (transitions != null && transitions.containsKey(id));
-        if (existsInChild) {
-            return true;
-        }
-        if (document.getParent() != null && !document.getParent().isEmpty()) {
-            PetriNet parentNet = petriNetService.getNewestVersionByIdentifier(document.getParent());
-            if (parentNet != null) {
-                boolean existsInParent = (parentNet.getPlaces() != null && parentNet.getPlaces().containsKey(id)) ||
-                        (parentNet.getTransitions() != null && parentNet.getTransitions().containsKey(id));
-                return existsInParent;
-            }
-        }
-        return false;
     }
 
     @Transactional
@@ -1096,22 +1098,20 @@ public class Importer {
 
     @Transactional
     protected Node getNode(String id) {
-        // Hľadáme uzol v merged sieti (child aj parent sú už zlúčené v net)
-        if (places != null && places.containsKey(id)) {
+        if (places.containsKey(id)) {
             return getPlace(id);
-        }
-        if (transitions != null && transitions.containsKey(id)) {
+        } else if (transitions.containsKey(id)) {
             return getTransition(id);
         }
         throw new IllegalArgumentException("Node with id [" + id + "] not found.");
     }
 
-
     protected void addPredefinedRolesWithDefaultPermissions(com.netgrif.application.engine.importer.model.Transition importTransition, Transition transition) {
         for (Mapping mapping : document.getMapping()) {
             if (Objects.equals(mapping.getTransitionRef(), importTransition.getId())
                     && (mapping.getRoleRef() != null && !mapping.getRoleRef().isEmpty())
-                    && (mapping.getTrigger() != null && !mapping.getTrigger().isEmpty())) {
+                    && (mapping.getTrigger() != null && !mapping.getTrigger().isEmpty())
+            ) {
                 return;
             }
         }

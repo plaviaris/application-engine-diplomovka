@@ -2,13 +2,17 @@ package com.netgrif.application.engine.petrinet.domain.service;
 
 import com.netgrif.application.engine.petrinet.domain.PetriNet;
 import com.netgrif.application.engine.petrinet.domain.Transition;
+import com.netgrif.application.engine.petrinet.domain.Place;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 
 @Service
@@ -45,6 +49,16 @@ public class DetermineInheritanceService {
      * - Ak ani jedno nie je zapnuté, vráti "No Inheritance".
      */
     public static String determineInheritanceType(PetriNet parentNet, PetriNet childNet) {
+
+        if (!protocolChecker && Objects.equals(childNet.getType(), "protocol")) {
+            throw new IllegalStateException(
+                    "Protocol inheritance is forbidden"
+            );
+        } else if (!projectionChecker && Objects.equals(childNet.getType(), "projection")) {
+            throw new IllegalStateException(
+                    "Projection inheritance is forbidden"
+            );
+        }
         // 1) Vygenerujeme reachability grafy
         Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> parentGraph =
                 PetriNetUtils.generateReachabilityGraph(parentNet);
@@ -60,14 +74,19 @@ public class DetermineInheritanceService {
         PetriNetUtils.printPetriNetStructure(childNet);
         PetriNetUtils.printGraph("Child Graph", childGraph);
 
+        Set<String> parentPlaceIds = parentNet.getPlaces().entrySet().stream()
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
+
         // Ak máme zapnutú kontrolu PROTOKOLOVEJ dedičnosti
-        if (protocolChecker) {
+        if (protocolChecker && Objects.equals(childNet.getType(), "protocol")) {
             Set<String> parentTransitionIds = getTransitionIds(parentNet);
 
             Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> protocolChildGraph =
                     PetriNetUtils.filterGraph(childGraph, parentTransitionIds);
 
-            PetriNetUtils.CompareResult compareResult = PetriNetUtils.compareReachabilityGraphs(parentGraph, protocolChildGraph);
+
+            PetriNetUtils.CompareResult compareResult = PetriNetUtils.compareReachabilityGraphs(parentGraph, protocolChildGraph, parentPlaceIds);
 
             if (!compareResult.matches) {
                 throw new IllegalStateException(
@@ -80,7 +99,7 @@ public class DetermineInheritanceService {
         }
 
         // Ak máme zapnutú kontrolu PROJEKČNEJ dedičnosti
-        if (projectionChecker) {
+        if (projectionChecker && Objects.equals(childNet.getType(), "projection")) {
             // Tu zavoláme (hypotetickú) metódu, ktorá zistí projekčnú dedičnosť
             boolean projectionOk = ProjectionInheritanceChecker
                     .checkProjectionInheritanceUsingReachabilityGraph(

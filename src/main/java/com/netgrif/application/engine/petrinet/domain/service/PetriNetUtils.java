@@ -11,8 +11,6 @@ import com.netgrif.application.engine.petrinet.domain.arcs.ResetArc;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static com.netgrif.application.engine.petrinet.domain.service.ProjectionInheritanceChecker.markingsMatch;
-
 /**
  * Utility metódy pre prácu s Petriho sieťami.
  */
@@ -213,85 +211,117 @@ public class PetriNetUtils {
      * Ak nájde nezhodu, vráti CompareResult(false, popisDovodu).
      * Ak všetko sedí, vráti CompareResult(true, "").
      */
+
+    static boolean markingsMatch(Map<String, Integer> parentMarking, Map<String, Integer> childMarking) {
+        for (String place : parentMarking.keySet()) {
+            if (!childMarking.containsKey(place) || !childMarking.get(place).equals(parentMarking.get(place))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Porovná reachability grafy rodiča (parentGraph) a dieťaťa (childGraph)
+     * len na miestach v allowedPlaces. Vracia CompareResult s chybovou správou,
+     * ak sa nájde nezhoda.
+     */
     static CompareResult compareReachabilityGraphs(
             Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> parentGraph,
-            Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> childGraph
+            Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> childGraph,
+            Set<String> allowedPlaces
     ) {
-        for (Map.Entry<Map<String, Integer>, Map<Transition, Map<String, Integer>>> parentEntry : parentGraph.entrySet()) {
-            Map<String, Integer> parentMarking = parentEntry.getKey();
+        for (var parentEntry : parentGraph.entrySet()) {
+            var pMarking = parentEntry.getKey();
 
-            // Skúsime nájsť zodpovedajúci (matching) marking v detskom grafe
-            Optional<Map<String, Integer>> matchingChildMarkingOpt = childGraph.keySet().stream()
-                    .filter(childMarking -> markingsMatch(parentMarking, childMarking))
+            // 1) nájdi matchujúce childMarking podľa allowedPlaces
+            Optional<Map<String,Integer>> matchOpt = childGraph.keySet().stream()
+                    .filter(cMarking -> markingsMatchOn(pMarking, cMarking, allowedPlaces))
                     .findFirst();
-
-            if (!matchingChildMarkingOpt.isPresent()) {
-                // Nevieme nájsť zhodný marking
-                String reason = "No matching marking found in child for parent marking: " + parentMarking;
+            if (matchOpt.isEmpty()) {
+                String reason = "No matching marking in child for parent marking: " + pMarking;
                 System.out.println("❌ " + reason);
                 return new CompareResult(false, reason);
             }
+            var cMarking = matchOpt.get();
 
-            Map<String, Integer> matchingChildMarking = matchingChildMarkingOpt.get();
-
-            // Porovnanie prechodov
-            Map<Transition, Map<String, Integer>> parentTransitions = parentEntry.getValue();
-            Map<Transition, Map<String, Integer>> childTransitions = childGraph.get(matchingChildMarking);
-
-            for (Transition parentTransition : parentTransitions.keySet()) {
-                // Ak detský graf neobsahuje tento prechod, je to nezhoda
-                if (!childTransitions.containsKey(parentTransition)) {
-                    String reason = "Child marking missing parent transition '"
-                            + parentTransition.getStringId() + "' at marking: " + parentMarking;
+            // 2) prechody rodiča oproti detským
+            var pTransMap = parentEntry.getValue();
+            var cTransMap = childGraph.get(cMarking);
+            for (var pT : pTransMap.keySet()) {
+                // nájdi transition v childGraph podľa ID
+                Optional<Transition> cTopt = cTransMap.keySet().stream()
+                        .filter(ct -> ct.getStringId().equals(pT.getStringId()))
+                        .findFirst();
+                if (cTopt.isEmpty()) {
+                    String reason = "Child missing parent transition '"
+                            + pT.getStringId() + "' at marking: " + pMarking;
                     System.out.println("❌ " + reason);
                     return new CompareResult(false, reason);
                 }
+                var cT = cTopt.get();
 
-                // Porovnáme cieľové markingy
-                Map<String, Integer> parentTargetMarking = parentTransitions.get(parentTransition);
-                Map<String, Integer> childTargetMarking = childTransitions.get(parentTransition);
-
-                if (!markingsMatch(parentTargetMarking, childTargetMarking)) {
-                    String reason = "Transition '" + parentTransition.getStringId()
-                            + "' leads to different target markings:\n"
-                            + "   Parent: " + parentTargetMarking + "\n"
-                            + "   Child : " + childTargetMarking;
+                // 3) porovnaj cieľové markingy len na allowedPlaces
+                var pNext = pTransMap.get(pT);
+                var cNext = cTransMap.get(cT);
+                if (!markingsMatchOn(pNext, cNext, allowedPlaces)) {
+                    String reason = "Transition '" + pT.getStringId() +
+                            "' leads to different markings: parent→" + pNext +
+                            ", child→" + cNext;
                     System.out.println("❌ " + reason);
                     return new CompareResult(false, reason);
                 }
             }
         }
-
-        // Ak sme prešli všetky markingy a nenašli žiadnu nezhodu:
-        System.out.println("✅ All parent markings and transitions matched in the child reachability graph.");
+        System.out.println("✅ All parent markings and transitions matched in the child graph.");
         return new CompareResult(true, "");
     }
 
-
     /**
-     * Ponechá v grafe len tie prechody, ktorých ID je v allowedTransitions.
+     * Ponechá v grafe len tie hrany (transition→target), ktorých transition.getStringId()
+     * je v allowedTransitions. Uzly (markings) ostanú, ale bez nepotrebných hrán.
      */
     public static Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> filterGraph(
             Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> graph,
             Set<String> allowedTransitions
     ) {
-        Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> filteredGraph = new HashMap<>();
-
-        for (Map.Entry<Map<String, Integer>, Map<Transition, Map<String, Integer>>> entry : graph.entrySet()) {
-            // Pôvodná hodnota (prehody -> ciele)
-            Map<Transition, Map<String, Integer>> originalTransitions = entry.getValue();
-            Map<Transition, Map<String, Integer>> filteredTransitions = new HashMap<>();
-
-            for (Map.Entry<Transition, Map<String, Integer>> transitionEntry : originalTransitions.entrySet()) {
-                if (allowedTransitions.contains(transitionEntry.getKey().getStringId())) {
-                    filteredTransitions.put(transitionEntry.getKey(), transitionEntry.getValue());
+        Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> filtered = new HashMap<>();
+        for (var entry : graph.entrySet()) {
+            Map<Transition, Map<String, Integer>> keep = new HashMap<>();
+            for (var te : entry.getValue().entrySet()) {
+                if (allowedTransitions.contains(te.getKey().getStringId())) {
+                    keep.put(te.getKey(), te.getValue());
                 }
             }
-            filteredGraph.put(entry.getKey(), filteredTransitions);
+            filtered.put(entry.getKey(), keep);
         }
-
-        return filteredGraph;
+        return filtered;
     }
+
+    /**
+     * Kontroluje markingy len na vybraných miestach a zároveň zaisťuje,
+     * že na ostatných miestach nemá dieťa žiadne tokeny.
+     */
+    private static boolean markingsMatchOn(
+            Map<String, Integer> parent,
+            Map<String, Integer> child,
+            Set<String> placesToCheck
+    ) {
+        // (a) porovnaj iba allowedPlaces
+        for (String p : placesToCheck) {
+            if (!Objects.equals(parent.get(p), child.get(p))) {
+                return false;
+            }
+        }
+        // (b) v child nemožno mať tokeny inde
+        for (String p : child.keySet()) {
+            if (!placesToCheck.contains(p) && child.get(p) > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
 
     /**
      * Pomocná metóda pre debug – vypíše do konzoly všetky markingy a prechody daného grafu.
@@ -324,7 +354,6 @@ public class PetriNetUtils {
 
         System.out.println("=== PetriNet Structure: " + net.getStringId() + " ===");
 
-        // 1) Miesta (Places)
         if (net.getPlaces() != null) {
             System.out.println("Places:");
             for (Map.Entry<String, Place> placeEntry : net.getPlaces().entrySet()) {
@@ -336,7 +365,6 @@ public class PetriNetUtils {
             System.out.println("No places defined (net.getPlaces() == null).");
         }
 
-        // 2) Prechody (Transitions)
         if (net.getTransitions() != null) {
             System.out.println("Transitions:");
             for (Map.Entry<String, Transition> transitionEntry : net.getTransitions().entrySet()) {
@@ -348,22 +376,19 @@ public class PetriNetUtils {
             System.out.println("No transitions defined (net.getTransitions() == null).");
         }
 
-        // 3) Oblúky (Arcs)
-        // getArcs() je zvyčajne Map<String, List<Arc>>, kde kľúč je 'sourceId' (alebo iný identifikátor).
         if (net.getArcs() != null) {
             System.out.println("Arcs:");
             for (Map.Entry<String, List<Arc>> arcListEntry : net.getArcs().entrySet()) {
-                String arcSource = arcListEntry.getKey();
                 List<Arc> arcsFromSource = arcListEntry.getValue();
                 for (Arc arc : arcsFromSource) {
-                    // typ oblúka (regular, read, inhibitor, reset)
                     String arcType = arc.getClass().getSimpleName();
-                    // multiplicita
                     int multiplicity = arc.getMultiplicity();
-                    // kam (destination)
+
+                    String sourceId = arc.getSourceId();
                     String destId = arc.getDestinationId();
-                    System.out.println("  " + arcSource + " --(" + arcType + ", multiplicity="
-                            + multiplicity + ")--> " + destId);
+
+                    System.out.println("  " + sourceId + " --(" + arcType
+                            + ", multiplicity=" + multiplicity + ")--> " + destId);
                 }
             }
         } else {

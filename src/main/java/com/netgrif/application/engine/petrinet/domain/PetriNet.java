@@ -144,6 +144,11 @@ public class PetriNet extends PetriNetObject {
     @Setter
     private String parentId;
 
+    @org.springframework.data.mongodb.core.mapping.Field("typeOfInheritance")
+    @Getter
+    @Setter
+    private String type;
+
     @org.springframework.data.mongodb.core.mapping.Field("childrenIds")
     @Getter
     @Setter
@@ -172,6 +177,7 @@ public class PetriNet extends PetriNetObject {
         userRefs = new HashMap<>();
         functions = new LinkedList<>();
         parentId = "";
+        type = "";
         childrenIds = new ArrayList<>();
     }
 
@@ -229,16 +235,14 @@ public class PetriNet extends PetriNetObject {
     }
 
     public void addArc(Arc arc) {
-        if (this.arcs == null) {
-            this.arcs = new HashMap<>();
+        String transitionId = arc.getTransition().getStringId();
+        if (arcs.containsKey(transitionId)) {
+            arcs.get(transitionId).add(arc);
+        } else {
+            List<Arc> arcList = new LinkedList<>();
+            arcList.add(arc);
+            arcs.put(transitionId, arcList);
         }
-        String key = arc.getSourceId();
-        List<Arc> arcList = this.arcs.get(key);
-        if (arcList == null) {
-            arcList = new ArrayList<>();
-            this.arcs.put(key, arcList);
-        }
-        arcList.add(arc);
     }
 
 
@@ -418,6 +422,8 @@ public class PetriNet extends PetriNetObject {
 
     public PetriNet clone() {
         PetriNet clone = new PetriNet();
+        clone.setType(this.type);
+        clone.setParentId(this.parentId);
         clone.setIdentifier(this.identifier);
         clone.setUriNodeId(this.uriNodeId);
         clone.setInitials(this.initials);

@@ -3,6 +3,8 @@ package com.netgrif.application.engine.petrinet.domain;
 import com.netgrif.application.engine.petrinet.domain.arcs.Arc;
 import com.netgrif.application.engine.petrinet.domain.roles.ProcessRole;
 import com.netgrif.application.engine.petrinet.domain.dataset.Field;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -14,6 +16,8 @@ import java.util.stream.Collectors;
  * Ak sa v detskej sieti nachádza prvok s rovnakým identifikátorom ako v parent, vyhodí sa IllegalStateException.
  */
 public class InheritanceMerger {
+
+    private static final Logger log = LoggerFactory.getLogger(InheritanceMerger.class);
 
     public static PetriNet mergeParentIntoChild(PetriNet parent, PetriNet child) {
         PetriNet merged = child.clone();
@@ -67,8 +71,8 @@ public class InheritanceMerger {
             for (Map.Entry<String, Field> entry : parent.getDataSet().entrySet()) {
                 String parentFieldId = entry.getKey();
                 if (merged.getDataSet().containsKey(parentFieldId)) {
-                    throw new IllegalStateException("Conflict: Child PetriNet already contains Field with ID '"
-                            + parentFieldId + "' from parent.");
+                    log.info("Conflict: Child PetriNet already contains Field with ID '"+ parentFieldId + "' from parent. parent will be overrided");
+                    continue;
                 }
                 merged.getDataSet().put(parentFieldId, entry.getValue());
             }

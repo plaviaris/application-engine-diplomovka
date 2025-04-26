@@ -208,15 +208,8 @@ public class Importer {
         document.getData().forEach(this::createDataSet);
         document.getTransaction().forEach(this::createTransaction);
         document.getPlace().forEach(this::createPlace);
-        document.getTransition().forEach(this::createTransition);
         document.getData().forEach(this::resolveDataActions);
-        document.getTransition().forEach(this::resolveTransitionActions);
         document.getData().forEach(this::addActionRefs);
-        actionRefs.forEach(this::resolveActionRefs);
-        document.getFunction().forEach(this::createFunction);
-        document.getRoleRef().forEach(this::resolveRoleRef);
-        document.getUsersRef().forEach(this::resolveUserRef);
-        document.getUserRef().forEach(this::resolveUserRef);
 
         addPredefinedRolesWithDefaultPermissions();
         resolveProcessEvents(document.getProcessEvents());
@@ -235,17 +228,38 @@ public class Importer {
             if (cachedParentNet == null) {
                 throw new IllegalArgumentException("Parent PetriNet not found with ID: " + document.getParent());
             }
+
             net = InheritanceMerger.mergeParentIntoChild(cachedParentNet, net);
+
+            document.getTransition().forEach(this::createTransition);
+            document.getTransition().forEach(this::resolveTransitionActions);
+            actionRefs.forEach(this::resolveActionRefs);
+            document.getFunction().forEach(this::createFunction);
+            document.getRoleRef().forEach(this::resolveRoleRef);
+            document.getUsersRef().forEach(this::resolveUserRef);
+            document.getUserRef().forEach(this::resolveUserRef);
+
+            net = InheritanceMerger.mergeParentTransitionsIntoChild(cachedParentNet, net);
 
             initializeFromParent();
 
             document.getArc().forEach(this::createArc);
+
+            net = InheritanceMerger.mergeParentArcIntoChild(cachedParentNet, net);
+
             document.getMapping().forEach(this::applyMapping);
 
             DetermineInheritanceService.determineInheritanceType(cachedParentNet, net);
 
 
         } else {
+            document.getTransition().forEach(this::createTransition);
+            document.getTransition().forEach(this::resolveTransitionActions);
+            actionRefs.forEach(this::resolveActionRefs);
+            document.getFunction().forEach(this::createFunction);
+            document.getRoleRef().forEach(this::resolveRoleRef);
+            document.getUsersRef().forEach(this::resolveUserRef);
+            document.getUserRef().forEach(this::resolveUserRef);
             document.getArc().forEach(this::createArc);
             document.getMapping().forEach(this::applyMapping);
         }

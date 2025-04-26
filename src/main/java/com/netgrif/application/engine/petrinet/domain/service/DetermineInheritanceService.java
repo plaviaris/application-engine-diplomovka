@@ -49,7 +49,9 @@ public class DetermineInheritanceService {
      * - Ak ani jedno nie je zapnuté, vráti "No Inheritance".
      */
     public static String determineInheritanceType(PetriNet parentNet, PetriNet childNet) {
-
+        if ( Objects.equals(childNet.getType(), "none")) {
+            return "None inheritance checked";
+        }
         if (!protocolChecker && Objects.equals(childNet.getType(), "protocol")) {
             throw new IllegalStateException(
                     "Protocol inheritance is forbidden"
@@ -78,9 +80,9 @@ public class DetermineInheritanceService {
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toSet());
 
-        // Ak máme zapnutú kontrolu PROTOKOLOVEJ dedičnosti
+        Set<String> parentTransitionIds = getTransitionIds(parentNet);
+
         if (protocolChecker && Objects.equals(childNet.getType(), "protocol")) {
-            Set<String> parentTransitionIds = getTransitionIds(parentNet);
 
             Map<Map<String, Integer>, Map<Transition, Map<String, Integer>>> protocolChildGraph =
                     PetriNetUtils.filterGraph(childGraph, parentTransitionIds);
@@ -90,33 +92,25 @@ public class DetermineInheritanceService {
 
             if (!compareResult.matches) {
                 throw new IllegalStateException(
-                        "Child PetriNet does not meet PROTOCOL inheritance requirements.\n"
-                                + "Reason: " + compareResult.mismatchReason
+                        "Child PetriNet does not meet PROTOCOL inheritance requirements.\n" + "Reason: " + compareResult.mismatchReason
                 );
             }
-            // Ak sme došli sem, protokolová dedičnosť je v poriadku
             return "Protocol Inheritance";
         }
 
-        // Ak máme zapnutú kontrolu PROJEKČNEJ dedičnosti
         if (projectionChecker && Objects.equals(childNet.getType(), "projection")) {
-            // Tu zavoláme (hypotetickú) metódu, ktorá zistí projekčnú dedičnosť
             boolean projectionOk = ProjectionInheritanceChecker
                     .checkProjectionInheritanceUsingReachabilityGraph(
-                            parentGraph, childGraph, getTransitionIds(parentNet)
+                            parentGraph, childGraph, parentTransitionIds
                     );
 
             if (!projectionOk) {
-                throw new IllegalStateException(
-                        "Child PetriNet does not meet PROJECTION inheritance requirements."
-                );
+                throw new IllegalStateException("Child PetriNet does not meet PROJECTION inheritance requirements.");
             }
-            // Ak projekčná dedičnosť prešla
             return "Projection Inheritance";
         }
 
-        // Ani protocolChecker, ani projectionChecker nie je true => nerobíme kontrolu
-        return "No Inheritance";
+        throw new IllegalStateException("Unknown inheritance " + childNet.getType());
     }
 
     /**

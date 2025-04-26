@@ -22,20 +22,6 @@ public class InheritanceMerger {
     public static PetriNet mergeParentIntoChild(PetriNet parent, PetriNet child) {
         PetriNet merged = child.clone();
 
-        if (parent.getTransitions() != null) {
-            if (merged.getTransitions() == null) {
-                merged.setTransitions(new HashMap<>());
-            }
-            for (Map.Entry<String, Transition> entry : parent.getTransitions().entrySet()) {
-                String parentTransitionId = entry.getKey();
-                if (merged.getTransitions().containsKey(parentTransitionId)) {
-                    throw new IllegalStateException("Conflict: Child PetriNet already contains Transition with ID '"
-                            + parentTransitionId + "' from parent.");
-                }
-                merged.getTransitions().put(parentTransitionId, entry.getValue());
-            }
-        }
-
         if (parent.getPlaces() != null) {
             if (merged.getPlaces() == null) {
                 merged.setPlaces(new HashMap<>());
@@ -71,19 +57,33 @@ public class InheritanceMerger {
             for (Map.Entry<String, Field> entry : parent.getDataSet().entrySet()) {
                 String parentFieldId = entry.getKey();
                 if (merged.getDataSet().containsKey(parentFieldId)) {
-                    log.info("Conflict: Child PetriNet already contains Field with ID '"+ parentFieldId + "' from parent. parent will be overrided");
-                    continue;
+                    throw new IllegalStateException("Conflict: Child PetriNet already contains Field with ID '"+ parentFieldId + "' from parent. parent will be overrided");
                 }
                 merged.getDataSet().put(parentFieldId, entry.getValue());
             }
         }
+        return merged;
+    }
 
-        // Zlúčenie funkcií: pridáme funkcie z parent, ktoré v merged sieti ešte nie sú.
-        if (parent.getFunctions() != null) {
-            if (merged.getFunctions() == null) {
-                merged.setFunctions(new LinkedList<>());
+    public static PetriNet mergeParentTransitionsIntoChild(PetriNet parent, PetriNet child) {
+        if (parent.getTransitions() != null) {
+            if (child.getTransitions() == null) {
+                child.setTransitions(new HashMap<>());
             }
-            Set<String> existingFunctionIds = merged.getFunctions().stream()
+            for (Map.Entry<String, Transition> entry : parent.getTransitions().entrySet()) {
+                String parentTransitionId = entry.getKey();
+                if (child.getTransitions().containsKey(parentTransitionId)) {
+                    throw new IllegalStateException("Conflict: Child PetriNet already contains Transition with ID '"
+                            + parentTransitionId + "' from parent.");
+                }
+                child.getTransitions().put(parentTransitionId, entry.getValue());
+            }
+        }
+        if (parent.getFunctions() != null) {
+            if (child.getFunctions() == null) {
+                child.setFunctions(new LinkedList<>());
+            }
+            Set<String> existingFunctionIds = child.getFunctions().stream()
                     .map(func -> func.getImportId())
                     .collect(Collectors.toSet());
             for (com.netgrif.application.engine.petrinet.domain.Function func : parent.getFunctions()) {
@@ -91,43 +91,37 @@ public class InheritanceMerger {
                     throw new IllegalStateException("Conflict: Child PetriNet already contains Function with importId '"
                             + func.getImportId() + "' from parent.");
                 }
-                merged.getFunctions().add(func);
+                child.getFunctions().add(func);
             }
         }
 
+        return child;
+    }
+
+    public static PetriNet mergeParentArcIntoChild(PetriNet parent, PetriNet child) {
         if (parent.getArcs() != null) {
-            if (merged.getArcs() == null) {
-                merged.setArcs(new HashMap<>());
+            if (child.getArcs() == null) {
+                child.setArcs(new HashMap<>());
             }
             for (Map.Entry<String, List<Arc>> parentArcsEntry : parent.getArcs().entrySet()) {
                 String sourceId = parentArcsEntry.getKey();
                 List<Arc> arcsFromParent = parentArcsEntry.getValue();
 
-                // Ak v merged sieti nemáme žiadny záznam pre daný sourceId, pridáme prázdny zoznam
-                merged.getArcs().putIfAbsent(sourceId, new LinkedList<>());
+                child.getArcs().putIfAbsent(sourceId, new LinkedList<>());
 
-                List<Arc> mergedArcList = merged.getArcs().get(sourceId);
+                List<Arc> childArcList = child.getArcs().get(sourceId);
 
                 for (Arc parentArc : arcsFromParent) {
-                    // Tu môžete podľa potreby zistiť, či už v child nete náhodou nie je rovnaký oblúk
-                    // (napr. s rovnakým ID, source/dest alebo inou identifikáciou).
-                    // Ak áno, vyhoďte IllegalStateException, prípadne ho môžete preskočiť, to závisí od vašej politiky.
-
-                    // Napríklad takto – ak nájdeme rovnaké ID v mergedArcList, vyhodíme conflict:
-                    // (Treba rátať, že Arc niekedy ID nemá, alebo ho ukladá inak.)
-                    if (mergedArcList.stream()
+                    if (childArcList.stream()
                             .anyMatch(arc -> arc.getStringId().equals(parentArc.getStringId()))) {
                         throw new IllegalStateException("Conflict: Child PetriNet already contains Arc with ID '"
                                 + parentArc.getStringId() + "' from parent.");
                     }
 
-                    // Inak oblúk pridáme
-                    mergedArcList.add(parentArc);
+                    childArcList.add(parentArc);
                 }
             }
         }
-
-
-        return merged;
+        return child;
     }
 }

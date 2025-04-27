@@ -20,54 +20,53 @@ public class InheritanceMerger {
     private static final Logger log = LoggerFactory.getLogger(InheritanceMerger.class);
 
     public static PetriNet mergeParentIntoChild(PetriNet parent, PetriNet child) {
-        PetriNet merged = child.clone();
 
         if (parent.getPlaces() != null) {
-            if (merged.getPlaces() == null) {
-                merged.setPlaces(new HashMap<>());
+            if (child.getPlaces() == null) {
+                child.setPlaces(new HashMap<>());
             }
             for (Map.Entry<String, Place> entry : parent.getPlaces().entrySet()) {
                 String parentPlaceId = entry.getKey();
-                if (merged.getPlaces().containsKey(parentPlaceId)) {
+                if (child.getPlaces().containsKey(parentPlaceId)) {
                     throw new IllegalStateException("Conflict: Child PetriNet already contains Place with ID '"
                             + parentPlaceId + "' from parent.");
                 }
-                merged.getPlaces().put(parentPlaceId, entry.getValue());
+                child.getPlaces().put(parentPlaceId, entry.getValue());
             }
         }
 
         if (parent.getRoles() != null) {
-            if (merged.getRoles() == null) {
-                merged.setRoles(new HashMap<>());
+            if (child.getRoles() == null) {
+                child.setRoles(new HashMap<>());
             }
             for (Map.Entry<String, ProcessRole> entry : parent.getRoles().entrySet()) {
                 String parentRoleImportId = entry.getValue().getImportId();
 
-                for (ProcessRole mergedRole : merged.getRoles().values()) {
+                for (ProcessRole mergedRole : child.getRoles().values()) {
                     if (mergedRole.getImportId().equals(parentRoleImportId)) {
                         throw new IllegalStateException("Conflict: Child PetriNet already contains Role with importId '"
                                 + parentRoleImportId + "' from parent.");
                     }
                 }
 
-                merged.getRoles().put(entry.getKey(), entry.getValue());
+                child.getRoles().put(entry.getKey(), entry.getValue());
             }
         }
 
 
         if (parent.getDataSet() != null) {
-            if (merged.getDataSet() == null) {
-                merged.setDataSet(new HashMap<>());
+            if (child.getDataSet() == null) {
+                child.setDataSet(new HashMap<>());
             }
             for (Map.Entry<String, Field> entry : parent.getDataSet().entrySet()) {
                 String parentFieldId = entry.getKey();
-                if (merged.getDataSet().containsKey(parentFieldId)) {
+                if (child.getDataSet().containsKey(parentFieldId)) {
                     throw new IllegalStateException("Conflict: Child PetriNet already contains Field with ID '"+ parentFieldId + "' from parent. parent will be overrided");
                 }
-                merged.getDataSet().put(parentFieldId, entry.getValue());
+                child.getDataSet().put(parentFieldId, entry.getValue());
             }
         }
-        return merged;
+        return child;
     }
 
     public static PetriNet mergeParentTransitionsIntoChild(PetriNet parent, PetriNet child) {

@@ -236,6 +236,7 @@ public class Importer {
         }
 
         if (document.getParent() != null) {
+
             cachedParentNet = petriNetService.getNewestVersionByIdentifier(document.getParent().getId());
             if (cachedParentNet == null) {
                 throw new IllegalArgumentException("Parent PetriNet not found with ID: " + document.getParent());
@@ -245,10 +246,10 @@ public class Importer {
 
             initializeFromParent();
 
-            document.getTransition().forEach(this::createTransition);
-            document.getTransition().forEach(this::resolveTransitionActions);
             document.getData().forEach(this::resolveDataActions);
             document.getData().forEach(this::addActionRefs);
+            document.getTransition().forEach(this::createTransition);
+            document.getTransition().forEach(this::resolveTransitionActions);
             actionRefs.forEach(this::resolveActionRefs);
             document.getFunction().forEach(this::createFunction);
             document.getRoleRef().forEach(this::resolveRoleRef);

@@ -222,8 +222,6 @@ public class Importer {
         document.getData().forEach(this::createDataSet);
         document.getTransaction().forEach(this::createTransaction);
         document.getPlace().forEach(this::createPlace);
-        document.getData().forEach(this::resolveDataActions);
-        document.getData().forEach(this::addActionRefs);
 
         addPredefinedRolesWithDefaultPermissions();
         resolveProcessEvents(document.getProcessEvents());
@@ -249,6 +247,8 @@ public class Importer {
 
             document.getTransition().forEach(this::createTransition);
             document.getTransition().forEach(this::resolveTransitionActions);
+            document.getData().forEach(this::resolveDataActions);
+            document.getData().forEach(this::addActionRefs);
             actionRefs.forEach(this::resolveActionRefs);
             document.getFunction().forEach(this::createFunction);
             document.getRoleRef().forEach(this::resolveRoleRef);
@@ -267,6 +267,8 @@ public class Importer {
 
 
         } else {
+            document.getData().forEach(this::resolveDataActions);
+            document.getData().forEach(this::addActionRefs);
             document.getTransition().forEach(this::createTransition);
             document.getTransition().forEach(this::resolveTransitionActions);
             actionRefs.forEach(this::resolveActionRefs);

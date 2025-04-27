@@ -41,14 +41,19 @@ public class InheritanceMerger {
                 merged.setRoles(new HashMap<>());
             }
             for (Map.Entry<String, ProcessRole> entry : parent.getRoles().entrySet()) {
-                String parentRoleId = entry.getKey();
-                if (merged.getRoles().containsKey(parentRoleId)) {
-                    throw new IllegalStateException("Conflict: Child PetriNet already contains Role with ID '"
-                            + parentRoleId + "' from parent.");
+                String parentRoleImportId = entry.getValue().getImportId();
+
+                for (ProcessRole mergedRole : merged.getRoles().values()) {
+                    if (mergedRole.getImportId().equals(parentRoleImportId)) {
+                        throw new IllegalStateException("Conflict: Child PetriNet already contains Role with importId '"
+                                + parentRoleImportId + "' from parent.");
+                    }
                 }
-                merged.getRoles().put(parentRoleId, entry.getValue());
+
+                merged.getRoles().put(entry.getKey(), entry.getValue());
             }
         }
+
 
         if (parent.getDataSet() != null) {
             if (merged.getDataSet() == null) {

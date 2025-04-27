@@ -63,6 +63,8 @@ public class Importer {
     public static final String DEFAULT_FIELD_TEMPLATE = "material";
     public static final String DEFAULT_FIELD_APPEARANCE = "outline";
     public static final String DEFAULT_FIELD_ALIGNMENT = null;
+    private static boolean IS_CHILD = false;
+
 
     @Getter
     protected Document document;
@@ -159,12 +161,21 @@ public class Importer {
         if (cachedParentNet != null) {
             Map<String, Transition> parentTransitions = cachedParentNet.getTransitions();
             Map<String, Place> parentPlaces = cachedParentNet.getPlaces();
+            Map<String, ProcessRole> parentRoles = cachedParentNet.getRoles();
+            Map<String, Field> parentField = cachedParentNet.getDataSet();
+
 
             if (parentTransitions != null) {
                 this.transitions.putAll(parentTransitions);
             }
             if (parentPlaces != null) {
                 this.places.putAll(parentPlaces);
+            }
+            if (parentRoles != null) {
+                this.roles.putAll(parentRoles);
+            }
+            if (parentField != null) {
+                this.fields.putAll(parentField);
             }
         }
 
@@ -201,6 +212,9 @@ public class Importer {
         if(document.getParent() != null) {
             net.setParentId(document.getParent().getId());
             net.setType(document.getParent().getType());
+            IS_CHILD = true;
+        } else {
+            IS_CHILD = false;
         }
         net.setAnonymousRoleEnabled(document.isAnonymousRole() != null && document.isAnonymousRole());
 
@@ -231,6 +245,8 @@ public class Importer {
 
             net = InheritanceMerger.mergeParentIntoChild(cachedParentNet, net);
 
+            initializeFromParent();
+
             document.getTransition().forEach(this::createTransition);
             document.getTransition().forEach(this::resolveTransitionActions);
             actionRefs.forEach(this::resolveActionRefs);
@@ -240,8 +256,6 @@ public class Importer {
             document.getUserRef().forEach(this::resolveUserRef);
 
             net = InheritanceMerger.mergeParentTransitionsIntoChild(cachedParentNet, net);
-
-            initializeFromParent();
 
             document.getArc().forEach(this::createArc);
 
@@ -1210,7 +1224,12 @@ public class Importer {
         if (id.equals(ProcessRole.ANONYMOUS_ROLE)) {
             return anonymousRole;
         }
-        ProcessRole role = roles.get(id);
+        ProcessRole role = null;
+        for (ProcessRole roleToFind : roles.values()) {
+            if (id.equals(roleToFind.getImportId())) {
+                role =  roleToFind;
+            }
+        }
         if (role == null) {
             throw new IllegalArgumentException("Role " + id + " not found");
         }
